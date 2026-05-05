@@ -1,0 +1,36 @@
+{
+  "name": "@slipless/v3-sdk",
+  "version": "0.2.0",
+  "description": "Concentrated-liquidity AMM SDK for Slipless. Tick math, sqrtPriceX96, Pool/Position/Trade primitives.",
+  "license": "MIT",
+  "author": "Slipless Labs",
+  "homepage": "https://slipless.xyz",
+  "repository": { "type": "git", "url": "git+https://github.com/slipless-dex/v3-sdk.git" },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.17" },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": { "@slipless/sdk-core": "^0.4.0" },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  },
+  "keywords": ["slipless", "v3", "concentrated-liquidity", "amm", "tick"]
+}
