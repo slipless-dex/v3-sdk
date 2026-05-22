@@ -13,7 +13,6 @@ export class V3Pool {
   readonly token1: Token;
   readonly feeBps: number;
   readonly tickSpacing: number;
-
   readonly sqrtRatioX96: bigint;
   readonly liquidity: bigint;
   readonly tickCurrent: number;
@@ -52,24 +51,20 @@ export class V3Pool {
     return token.equals(this.token0) || token.equals(this.token1);
   }
 
-  /** Spot price of token1 per token0, computed from sqrtRatioX96^2. */
   get token0Price(): Price<Token, Token> {
-    const ratio = (this.sqrtRatioX96 * this.sqrtRatioX96) >> 96n;
     return new Price({
       baseCurrency: this.token0,
       quoteCurrency: this.token1,
-      numerator: ratio,
+      numerator: (this.sqrtRatioX96 * this.sqrtRatioX96) >> 96n,
       denominator: 1n << 96n,
     });
   }
+
   get token1Price(): Price<Token, Token> {
     return this.token0Price.invert();
   }
 
-  /**
-   * Quote `inputAmount` against this pool. Returns [outputAmount, nextPool].
-   * Walks ticks lazily; pure function — does not mutate `this`.
-   */
+  /** Pure. Walks ticks lazily. */
   getOutputAmount(inputAmount: CurrencyAmount<Token>): [CurrencyAmount<Token>, V3Pool] {
     if (!this.involvesToken(inputAmount.currency)) {
       throw new Error(`V3Pool.getOutputAmount: ${inputAmount.currency.symbol} not in pool`);
@@ -78,54 +73,35 @@ export class V3Pool {
 
     let sqrtRatio = this.sqrtRatioX96;
     let liquidity = this.liquidity;
-    let tickIdx = this.indexOfActiveTick();
-    let amountRemaining = inputAmount.raw;
-    let amountOut = 0n;
+    let tickIdx = this.activeTickIndex();
+    let remaining = inputAmount.raw;
+    let out = 0n;
     const fee = BigInt(this.feeBps);
 
     let safety = 0;
-    while (amountRemaining > ZERO && liquidity > ZERO) {
-      if (++safety > 2048) break;
-
-      const nextTick = zeroForOne
-        ? this.ticks[tickIdx]
-        : this.ticks[tickIdx + 1];
+    while (remaining > ZERO && liquidity > ZERO && safety++ < 2048) {
+      const nextTick = zeroForOne ? this.ticks[tickIdx] : this.ticks[tickIdx + 1];
       if (!nextTick) break;
 
-      const sqrtRatioTarget = getSqrtRatioAtTick(
-        clampTick(nextTick.index),
-      );
-
+      const sqrtTarget = getSqrtRatioAtTick(clampTick(nextTick.index));
       const step = computeSwapStep({
         sqrtRatioCurrentX96: sqrtRatio,
-        sqrtRatioTargetX96: sqrtRatioTarget,
+        sqrtRatioTargetX96: sqrtTarget,
         liquidity,
-        amountRemaining,
+        amountRemaining: remaining,
         feeBps: fee,
       });
 
       sqrtRatio = step.sqrtRatioNextX96;
-      amountRemaining -= step.amountIn + step.feeAmount;
-      amountOut += step.amountOut;
+      remaining -= step.amountIn + step.feeAmount;
+      out += step.amountOut;
 
-      if (sqrtRatio === sqrtRatioTarget) {
-        // Crossed the tick.
-        if (zeroForOne) {
-          liquidity -= nextTick.liquidityNet;
-          tickIdx -= 1;
-        } else {
-          liquidity += nextTick.liquidityNet;
-          tickIdx += 1;
-        }
-      } else {
-        break;
-      }
+      if (sqrtRatio !== sqrtTarget) break;
+      if (zeroForOne) { liquidity -= nextTick.liquidityNet; tickIdx -= 1; }
+      else            { liquidity += nextTick.liquidityNet; tickIdx += 1; }
     }
 
-    const output = CurrencyAmount.fromRawAmount(
-      zeroForOne ? this.token1 : this.token0,
-      amountOut,
-    );
+    const output = CurrencyAmount.fromRawAmount(zeroForOne ? this.token1 : this.token0, out);
     const nextPool = new V3Pool({
       tokenA: this.token0,
       tokenB: this.token1,
@@ -133,16 +109,17 @@ export class V3Pool {
       tickSpacing: this.tickSpacing,
       sqrtRatioX96: sqrtRatio,
       liquidity,
-      tickCurrent: this.tickCurrent, // approximate; consumers re-fetch on chain anyway
+      tickCurrent: this.tickCurrent,
       ticks: this.ticks,
     });
     return [output, nextPool];
   }
 
-  private indexOfActiveTick(): number {
+  /** Largest tick ≤ tickCurrent. -1 if no ticks. */
+  private activeTickIndex(): number {
+    if (this.ticks.length === 0) return -1;
     let lo = 0;
     let hi = this.ticks.length - 1;
-    if (hi < 0) return -1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
       if (this.ticks[mid]!.index <= this.tickCurrent) lo = mid;
@@ -153,7 +130,5 @@ export class V3Pool {
 }
 
 function clampTick(t: number): number {
-  if (t < MIN_TICK) return MIN_TICK;
-  if (t > MAX_TICK) return MAX_TICK;
-  return t;
+  return t < MIN_TICK ? MIN_TICK : t > MAX_TICK ? MAX_TICK : t;
 }

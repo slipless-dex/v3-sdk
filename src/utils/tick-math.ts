@@ -1,14 +1,3 @@
-/**
- * TickMath — bigint port of Uniswap V3's TickMath library.
- *
- * Tick ↔ sqrtPriceX96 conversions using the canonical magic-constant
- * sequence. Lossless within the V3 tick range [MIN_TICK, MAX_TICK].
- * Numeric correctness verified against the reference implementation in
- * `test/tick-math.test.ts`.
- */
-
-import { TWO_96 } from "@slipless/sdk-core";
-
 export const MIN_TICK = -887_272;
 export const MAX_TICK = -MIN_TICK;
 export const MIN_SQRT_RATIO = 4_295_128_739n;
@@ -16,12 +5,10 @@ export const MAX_SQRT_RATIO =
   1_461_446_703_485_210_103_287_273_052_203_988_822_378_723_970_342n;
 
 /**
- * Returns sqrt(1.0001^tick) * 2^96 as a uint160.
+ * sqrt(1.0001^tick) * 2^96 as a uint160.
  *
- * Uses the bit-trick decomposition of `tick` followed by 19 conditional
- * multiplies. Each magic constant is `2^128 * 1.0001^(-2^k)` so that
- * multiplying-and-shifting accumulates 1.0001^(-tick) up to a final
- * inversion if the requested tick is positive.
+ * Bit-decomposes |tick| and applies Q128.128 magic constants equal to
+ * 1.0001^(-2^k). Final inversion if tick > 0, then Q128.128 → Q64.96.
  */
 export function getSqrtRatioAtTick(tick: number): bigint {
   if (!Number.isInteger(tick) || tick < MIN_TICK || tick > MAX_TICK) {
@@ -52,21 +39,11 @@ export function getSqrtRatioAtTick(tick: number): bigint {
   if ((absTick & 0x40000n) !== 0n) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98n) >> 128n;
   if ((absTick & 0x80000n) !== 0n) ratio = (ratio * 0x48a170391f7dc42444e8fa2n) >> 128n;
 
-  if (tick > 0) {
-    ratio = ((1n << 256n) - 1n) / ratio;
-  }
-  // Convert from Q128.128 to Q64.96 (shift down by 32).
-  const sqrtPriceX96 = (ratio >> 32n) + ((ratio & ((1n << 32n) - 1n)) === 0n ? 0n : 1n);
-  void TWO_96; // referenced here so editor folding finds the constant.
-  return sqrtPriceX96;
+  if (tick > 0) ratio = ((1n << 256n) - 1n) / ratio;
+  return (ratio >> 32n) + ((ratio & ((1n << 32n) - 1n)) === 0n ? 0n : 1n);
 }
 
-/**
- * Inverse: returns the largest tick whose ratio ≤ sqrtPriceX96.
- * Implemented by binary search bounded by the canonical range; the
- * exact bit-magic version is only ~5% faster and orders of magnitude
- * harder to audit, so we keep the search variant here.
- */
+/** Largest tick whose ratio ≤ sqrtPriceX96. Binary search; ~5% slower than bit-magic but safer to audit. */
 export function getTickAtSqrtRatio(sqrtPriceX96: bigint): number {
   if (sqrtPriceX96 < MIN_SQRT_RATIO || sqrtPriceX96 > MAX_SQRT_RATIO) {
     throw new RangeError("getTickAtSqrtRatio: sqrtRatio out of range");
@@ -81,7 +58,6 @@ export function getTickAtSqrtRatio(sqrtPriceX96: bigint): number {
   return lo;
 }
 
-/** Round `tick` to the nearest multiple of `tickSpacing` (toward zero). */
 export function nearestUsableTick(tick: number, tickSpacing: number): number {
   if (!Number.isInteger(tickSpacing) || tickSpacing <= 0) {
     throw new RangeError("nearestUsableTick: tickSpacing must be positive integer");
